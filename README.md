@@ -421,7 +421,67 @@ These features will enhance scalability and streamline operations for handling l
 
 
 ---
+## Deployment
 
+To deploy the Lambda functions across the platform, follow these steps:
+
+### Python-based Lambdas: User, Memberships, GPT
+
+1. **Prerequisites**:
+    - Install Docker for containerized builds.
+    - Ensure `nvm` is installed and set to Node.js version 22 for compatibility.
+
+2. **Build and Package**:
+    - Use the provided `build_lambda.sh` script to package the Python-based Lambdas. For example:
+      ```bash
+      ./build_lambda.sh ./PythonConnectors/*.py
+      ```
+    - This script will:
+      - Create a clean build environment using Docker.
+      - Install dependencies and package the Lambda function into a deployable `.zip` file.
+
+3. **Deploy to AWS Lambda**:
+    - Use the AWS CLI to update the Lambda function:
+      ```bash
+      aws lambda update-function-code \
+         --function-name <function-name> \
+         --zip-file fileb://<lambda-package>.zip \
+         --region us-east-2
+      ```
+    - Replace `<function-name>` with the appropriate Lambda function name (e.g., `traffic-user`, `traffic-memberships`, `traffic-gpt`) and `<lambda-package>.zip` with the generated package file.
+    - Alternatively, we can deploy using the .zip upload function via Code Editor on the Lambda screen.
+
+---
+
+### Node.js-based Lambda: Traffic Gateway
+
+1. **Prerequisites**:
+    - Use `nvm` to set Node.js version 22:
+      ```bash
+      nvm install 22
+      nvm use 22
+      ```
+
+2. **Build and Package**:
+    - Install dependencies and package the handler together with `node_modules`:
+      ```bash
+      npm install
+      zip -r TrafficLambda.zip traffic-gateway.js node_modules
+      ```
+
+3. **Deploy to AWS Lambda**:
+    - Use the AWS CLI to update the Lambda function:
+      ```bash
+      aws lambda update-function-code \
+         --function-name traffic-gateway \
+         --zip-file fileb://TrafficLambda.zip \
+         --region us-east-2
+      ```
+    - Alternatively, we can deploy using the .zip upload function via Code Editor on the Lambda screen.
+
+Replace `<function-name>` and file paths as needed for each Lambda. Ensure all environment variables are configured in the AWS Console before deployment.
+
+--
 ## Architecture Summary
 - **Traffic Gateway**: Written in JavaScript for ease of integration and routing.
 - **Database Endpoints**: Written in Python to leverage its strengths in data manipulation and aggregation.

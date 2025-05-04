@@ -1,102 +1,68 @@
-# This script is an AWS Lambda function that interacts with a DynamoDB table to manage user data for management of contacts for a membership.
+# AWS Lambda function to interact with OpenAI's GPT-3.5-turbo model & the storing/retreival results in DynamoDB
+
 
 import json
 import boto3
 import os
 from datetime import datetime
+import openai
 
 dynamodb = boto3.resource("dynamodb")
-table = dynamodb.Table(os.environ.get("CONTACTS_TABLE", "User"))  # default table name
+table = dynamodb.Table(os.environ.get("GPT_TABLE", "GPT_Transactions"))
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 def lambda_handler(event, context):
     method = event.get("httpMethod", "").upper()
     try:
-        if method == "POST":
-            return create_user(event)
-        elif method == "GET":
-            return get_user(event)
-        elif method in ("PUT", "PATCH"):
-            return update_user(event)
-        elif method == "DELETE":
-            return delete_user(event)
+        if method == "GET":
+            return get_or_generate(event)
         else:
             return respond(405, {"error": f"Unsupported method: {method}"})
     except Exception as e:
         return respond(500, {"error": str(e)})
 
-# POST: Create user
-def create_user(event):
-    body = json.loads(event.get("body", "{}"))
-    required = ["email", "firstName", "lastName", "business", "interest"]
-    if not all(k in body for k in required):
-        return respond(400, {"error": f"Missing required fields: {required}"})
+def get_or_generate(event):
+    params = event.get("queryStringParameters", {})
+    keyword = params.get("keyword", "").strip().lower()
+    promo = params.get("promo", "").strip()
+    gpt_input = params.get("gptInput", "").strip()
 
-    email = body["email"].lower().strip()
+    if not keyword or not gpt_input:
+        return respond(400, {"error": "Missing 'keyword' or 'gptInput' in query params."})
 
-    existing = table.get_item(Key={"email": email}).get("Item")
-    if existing:
-        return respond(409, {"error": "User already exists"})
-
-    item = {
-        "email": email,
-        "firstName": body["firstName"],
-        "lastName": body["lastName"],
-        "business": body["business"],
-        "interest": body["interest"],
-        "createdAt": datetime.utcnow().isoformat()
-    }
-
-    table.put_item(Item=item)
-    return respond(201, {"message": "User created", "data": item})
-
-# GET: Retrieve user
-def get_user(event):
-    email = event.get("queryStringParameters", {}).get("email", "").lower().strip()
-    if not email:
-        return respond(400, {"error": "Missing email query parameter"})
-
-    result = table.get_item(Key={"email": email})
+    # Check if already exists
+    result = table.get_item(Key={"prompt": keyword})
     item = result.get("Item")
+    if item:
+        return respond(200, item)
 
-    if not item:
-        return respond(404, {"error": "User not found"})
+    # Otherwise call OpenAI
+    try:
+        gpt_result = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            temperature=0.7,
+            messages=[{"role": "user", "content": gpt_input}]
+        )
 
-    return respond(200, item)
+        message = gpt_result.choices[0].message.content.strip()
+        parsed = json.loads(message)
 
-# PUT/PATCH: Update user
-def update_user(event):
-    body = json.loads(event.get("body", "{}"))
-    email = body.get("email", "").lower().strip()
-    if not email:
-        return respond(400, {"error": "Missing email field"})
+        record = {
+            "prompt": keyword,
+            "response": parsed,
+            "promo": promo,
+            "keyword": keyword,
+            "gptInput": gpt_input,
+            "createdAt": int(datetime.utcnow().timestamp())
+        }
 
-    updatable_fields = ["firstName", "lastName", "business", "interest"]
-    update_fields = {k: v for k, v in body.items() if k in updatable_fields}
+        table.put_item(Item=record)
+        return respond(200, record)
 
-    if not update_fields:
-        return respond(400, {"error": "No updatable fields provided"})
+    except Exception as e:
+        print({"error[GPT]": f"OpenAI error: {str(e)}"})
+        return respond(502, {"error": f"OpenAI error: {str(e)}"})
 
-    update_expr = "SET " + ", ".join(f"{k} = :{k}" for k in update_fields)
-    expr_vals = {f":{k}": v for k, v in update_fields.items()}
-
-    table.update_item(
-        Key={"email": email},
-        UpdateExpression=update_expr,
-        ExpressionAttributeValues=expr_vals
-    )
-
-    return respond(200, {"message": "User updated", "fields": list(update_fields.keys())})
-
-# DELETE: Remove user
-def delete_user(event):
-    email = event.get("queryStringParameters", {}).get("email", "").lower().strip()
-    if not email:
-        return respond(400, {"error": "Missing email query parameter"})
-
-    table.delete_item(Key={"email": email})
-    return respond(200, {"message": "User deleted", "email": email})
-
-# Response utility
 def respond(status, body):
     return {
         "statusCode": status,
