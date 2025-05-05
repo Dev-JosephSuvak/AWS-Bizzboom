@@ -33,7 +33,7 @@ export const handler = async (event) => {
       business,
       gpt,
       interest,
-      destinationWebhook = null,
+      destinationWebhook,
       mode = "funnel",
       method = "post",
       membership = {}
@@ -41,8 +41,9 @@ export const handler = async (event) => {
 
     const lowerEmail = email?.toLowerCase();
     const trimmedPrompt = (interest || gpt || "").trim().toLowerCase();
+    const webhook = destinationWebhook?.trim();
 
-    console.log("🧪 [handler] Inputs: email =", lowerEmail, "prompt =", trimmedPrompt, "mode =", mode);
+    console.log("🧪 [handler] Inputs: email =", lowerEmail, "prompt =", trimmedPrompt, "mode =", mode, "webhook = ", webhook);
 
     if (!lowerEmail || !trimmedPrompt || !mode) {
       console.log("❌ [handler] Missing required fields");
@@ -55,11 +56,12 @@ export const handler = async (event) => {
     switch (mode) {
       case "funnel":
         console.log("🔁 [handler] Routing to handleFunnelMode");
-        return await handleFunnelMode({ lowerEmail, firstName, lastName, business, trimmedPrompt, destinationWebhook, method });
+        console.log("🔁 [handler] Destination Webook", webhook);
+        return await handleFunnelMode({ lowerEmail, firstName, lastName, business, trimmedPrompt, webhook, method });
 
       case "search":
         console.log("🔁 [handler] Routing to handleSearchMode");
-        return await handleSearchMode({ lowerEmail, membership, trimmedPrompt, destinationWebhook, method });
+        return await handleSearchMode({ lowerEmail, membership, trimmedPrompt, webhook, method });
 
       case "user":
         console.log("🔁 [handler] Routing to handleUserMode");
@@ -79,7 +81,7 @@ export const handler = async (event) => {
   }
 };
 
-async function handleFunnelMode({ lowerEmail, firstName, lastName, business, trimmedPrompt, destinationWebhook, method }) {
+async function handleFunnelMode({ lowerEmail, firstName, lastName, business, trimmedPrompt, webhook, method }) {
   console.log("▶️ [funnel] Start", { lowerEmail, trimmedPrompt });
 
   try {
@@ -112,10 +114,37 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
       console.log("✅ [funnel] Parsed cached GPT response");
     } catch (parseErr) {
       console.warn("⚠️ [funnel] Failed to parse cached GPT response. Returning raw string.");
-      cachedOutput = res.data.response;
+      cachedOutput = res.data;
     }
   
-    return respond(202, { output: cachedOutput });
+    if (typeof webhook === "string" && webhook.trim() !== "" && webhook !== "null") {
+      console.log("📤 [funnel] Sending to webhook...");
+      await postToWebhook(webhook, {
+        email: lowerEmail,
+        firstName,
+        lastName,
+        business,
+        input: {
+          keyword: res.data.keyword,
+          promo: "Interest Funnel"
+        },
+        output: {
+          gptResponse: cachedOutput,
+          formattedText: extractAndFormatIdeas(cachedOutput),
+        }        
+      });
+      console.log("✅ [funnel] Webhook sent");
+    }
+
+    const formattedText = extractAndFormatIdeas(cachedOutput);
+
+    return respond(202, {
+      output: {
+        ...cachedOutput,
+        formattedText
+      }
+    });
+    
   
   } catch (err) {
     if (err.response?.status !== 404) {
@@ -126,8 +155,9 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
   }
   
 
-  const funnelPrompt = `You are a digital product strategist. Given a hobby, interest, or passion, identify 10 profitable niche or sub-niche angles. For each, provide 10 beginner-friendly, high-demand digital product ideas (example (but don't limit responses to): ebooks, templates, courses, planners).
-    Use specific, modern titles that feel fresh and ready to sell. Avoid duplicates or vague categories.
+  const funnelPrompt = `You are a digital product strategist.
+   Given a hobby, interest, or passion, identify profitable niches or sub-niche angles. For each niche, provide 50 beginner-friendly, high-demand digital product ideas (example (but don't limit responses to): ebooks, templates, courses, planners).
+    Use specific, modern titles that feel fresh and ready to sell. You should have a total of 50 ideas. Avoid duplicates or vague categories.
     Format your response as raw JSON like this: [{"surfing": ["idea 1", "idea 2", "idea 3", ...]}]. Only return valid JSON. Do not include explanations, markdown, or code fences.
     Interest: ${trimmedPrompt}`;
 
@@ -147,15 +177,23 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
   const gptResponse = postRes.data.response;
   console.log("🤖 [funnel] GPT Response:", gptResponse);
 
-  if (destinationWebhook) {
+    if (typeof webhook === "string" && webhook.trim() !== "" && webhook !== "null") {
     console.log("📤 [funnel] Sending to webhook...");
-    await postToWebhook(destinationWebhook, {
+    await postToWebhook(webhook, {
       email: lowerEmail,
       firstName,
       lastName,
       business,
-      gpt: trimmedPrompt,
-      output: gptResponse
+      input: {
+        prompt: funnelPrompt,
+        keyword: trimmedPrompt,
+        promo: "Interest Funnel",
+        gptInput: trimmedPrompt
+      },
+      output:{
+        gptResponse,
+        formattedText: extractAndFormatIdeas(gptResponse),
+      } 
     });
     console.log("✅ [funnel] Webhook sent");
   }
@@ -168,11 +206,13 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
       promo: "Interest Funnel",
       gptInput: trimmedPrompt
     },
-    output: gptResponse
-  });
+    output: {
+      gptResponse,
+      formattedText: extractAndFormatIdeas(gptResponse),
+    } });
 }
 
-async function handleSearchMode({ lowerEmail, membership, trimmedPrompt, destinationWebhook, method }) {
+async function handleSearchMode({ lowerEmail, membership, trimmedPrompt, webhook, method }) {
   console.log("▶️ [search] Start", { lowerEmail, trimmedPrompt });
 
   try {
@@ -208,18 +248,24 @@ async function handleSearchMode({ lowerEmail, membership, trimmedPrompt, destina
     }
   });
 
-  if (destinationWebhook) {
-    await postToWebhook(destinationWebhook, {
+  if (typeof webhook === "string" && webhook.trim() !== "" && webhook !== "null") {
+    await postToWebhook(webhook, {
       email: lowerEmail,
       plan: membership.plan,
       tier: membership.tier,
       gpt: trimmedPrompt,
-      output: gptResponse
+      output: {
+        gptResponse,
+        formattedText: extractAndFormatIdeas(gptResponse),
+      } 
     });
   }
 
   console.log("🏁 [search] Done");
-  return respond(200, { output: gptResponse });
+  return respond(200, { output: {
+    gptResponse,
+    formattedText: extractAndFormatIdeas(gptResponse),
+  } });
 }
 
 async function handleUserMode({ lowerEmail, firstName, lastName, business, interest, method }) {
@@ -297,3 +343,33 @@ async function generateViaOpenAI(prompt) {
   console.log("🧠 [generateViaOpenAI] Called with prompt:", prompt);
   return [{ [prompt]: ["Idea 1", "Idea 2", "Idea 3"] }];
 }
+
+function extractAndFormatIdeas(output) {
+  try {
+    const responseArray = output?.response;
+    if (!Array.isArray(responseArray) || responseArray.length === 0) return "";
+
+    const entry = responseArray[0];
+    const keyword = Object.keys(entry)[0];
+    const ideas = entry[keyword];
+
+    if (!Array.isArray(ideas)) return "";
+
+    const ideaLines = ideas.map((idea, i) => {
+      const clean = idea.replace(/^\d+\.\s*/, "").trim();
+      return `<p style="margin: 4px 0;">${i + 1}. ${clean}</p>`;
+    }).join("");
+
+    return `
+      <div style="max-width: 600px; margin: 0 auto; font-family: Arial, sans-serif; text-align: center;">
+        <h2 style="font-size: 24px; color: #04075b; margin-bottom: 20px;">📘 Your Personalized Idea List</h2>
+        ${ideaLines}
+        <p style="margin-top: 30px; color: #555;">💡 These ideas are tailored to your interest: <strong>${keyword}</strong></p>
+      </div>
+    `.trim();
+  } catch (err) {
+    console.warn("⚠️ Failed to format HTML ideas:", err.message);
+    return "";
+  }
+}
+
