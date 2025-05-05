@@ -108,7 +108,7 @@ def get_or_generate(event):
             "response": message,
             "promo": promo,
             "keyword": keyword,
-            "gptInput": gpt_input,
+            "prompt": gpt_input,
             "createdAt": int(datetime.utcnow().timestamp())
         }
 
@@ -147,7 +147,7 @@ def generate_and_store(event):
             "response": message,
             "promo": promo,
             "keyword": keyword,
-            "gptInput": body.get("gptInput", "").strip(),  # Keep for traceability
+            "prompt": gpt_prompt,  # Keep for traceability
             "createdAt": int(datetime.utcnow().timestamp())
         }
 
@@ -193,7 +193,7 @@ def purge_table():
 
 def list_gpt_entries():
     try:
-        scan = table.scan(ProjectionExpression="GPT, createdAt")
+        scan = table.scan()
         items = scan.get("Items", [])
         sorted_items = sorted(items, key=lambda x: x.get("createdAt", 0), reverse=True)
 
