@@ -99,7 +99,7 @@ def get_or_generate(event):
         )
         logger.info(f"📤 OpenAI Payload: {json.dumps(gpt_result, indent=2)}") 
 
-        message = gpt_result.choices[0].message.content.strip()
+        message = normalize_gpt_response(gpt_result.choices[0].message.content.strip())
 
         logger.info(f"🤖 OpenAI response received: {message[:200]}...")
 
@@ -108,7 +108,7 @@ def get_or_generate(event):
             "response": message,
             "promo": promo,
             "keyword": keyword,
-            "gptInput": gpt_input,
+            "prompt": gpt_input,
             "createdAt": int(datetime.utcnow().timestamp())
         }
 
@@ -139,7 +139,7 @@ def generate_and_store(event):
             messages=[{"role": "user", "content": gpt_prompt}]  # 👈 Corrected
         )
 
-        message = gpt_result.choices[0].message.content.strip()
+        message = normalize_gpt_response(gpt_result.choices[0].message.content.strip())
         logger.info(f"🤖 OpenAI returned response: {message[:200]}...")
 
         record = {
@@ -147,7 +147,7 @@ def generate_and_store(event):
             "response": message,
             "promo": promo,
             "keyword": keyword,
-            "gptInput": body.get("gptInput", "").strip(),  # Keep for traceability
+            "prompt": gpt_prompt,  # Keep for traceability
             "createdAt": int(datetime.utcnow().timestamp())
         }
 
@@ -193,7 +193,7 @@ def purge_table():
 
 def list_gpt_entries():
     try:
-        scan = table.scan(ProjectionExpression="GPT, createdAt")
+        scan = table.scan()
         items = scan.get("Items", [])
         sorted_items = sorted(items, key=lambda x: x.get("createdAt", 0), reverse=True)
 
@@ -201,3 +201,27 @@ def list_gpt_entries():
     except Exception as e:
         logger.exception("🛑 Failed to list GPT entries")
         return respond(500, {"error": str(e)})
+
+def normalize_gpt_response(raw_response):
+    raw = raw_response.strip()
+
+    # Try to unwrap JSON-encoded strings repeatedly
+    while True:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, str):
+                raw = parsed.strip()
+                continue
+            return parsed  # Could be dict, list, number, etc.
+        except json.JSONDecodeError:
+            break
+
+    # Try parsing as number
+    try:
+        if '.' in raw:
+            return float(raw)
+        return int(raw)
+    except ValueError:
+        pass
+
+    return raw  # Final fallback
