@@ -107,7 +107,7 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
     console.log("📦 [funnel] Checking GPT cache...");
     const res = await axios.get(`${GPT_API}?keyword=${encodeURIComponent(trimmedPrompt)}&cacheOnly=true`);
     console.log("✅ [funnel] Cache hit");
-  
+
     let cachedOutput;
     try {
       cachedOutput = JSON.parse(res.data.response);
@@ -116,7 +116,9 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
       console.warn("⚠️ [funnel] Failed to parse cached GPT response. Returning raw string.");
       cachedOutput = res.data;
     }
-  
+
+    const wrappedCachedOutput = { response: cachedOutput };
+
     if (typeof webhook === "string" && webhook.trim() !== "" && webhook !== "null") {
       console.log("📤 [funnel] Sending to webhook...");
       await postToWebhook(webhook, {
@@ -130,22 +132,19 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
         },
         output: {
           gptResponse: cachedOutput,
-          formattedText: extractAndFormatIdeas(cachedOutput),
-        }        
+          formattedText: extractAndFormatIdeas(wrappedCachedOutput),
+        }
       });
       console.log("✅ [funnel] Webhook sent");
     }
 
-    const formattedText = extractAndFormatIdeas(cachedOutput);
-
     return respond(202, {
       output: {
-        ...cachedOutput,
-        formattedText
+        gptResponse: cachedOutput,
+        formattedText: extractAndFormatIdeas(wrappedCachedOutput)
       }
     });
-    
-  
+
   } catch (err) {
     if (err.response?.status !== 404) {
       console.error("❌ [funnel] GPT GET failed:", err.message);
@@ -153,7 +152,6 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
     }
     console.log("📭 [funnel] Cache miss");
   }
-  
 
   const funnelPrompt = `You are a digital product strategist.
    Given a hobby, interest, or passion, identify profitable niches or sub-niche angles. For each niche, provide 50 beginner-friendly, high-demand digital product ideas (example (but don't limit responses to): ebooks, templates, courses, planners).
@@ -175,9 +173,11 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
   });
 
   const gptResponse = postRes.data.response;
+  const wrappedOutput = { response: gptResponse }; // ✅ Wrap it
+
   console.log("🤖 [funnel] GPT Response:", gptResponse);
 
-    if (typeof webhook === "string" && webhook.trim() !== "" && webhook !== "null") {
+  if (typeof webhook === "string" && webhook.trim() !== "" && webhook !== "null") {
     console.log("📤 [funnel] Sending to webhook...");
     await postToWebhook(webhook, {
       email: lowerEmail,
@@ -190,10 +190,10 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
         promo: "Interest Funnel",
         gptInput: trimmedPrompt
       },
-      output:{
+      output: {
         gptResponse,
-        formattedText: extractAndFormatIdeas(gptResponse),
-      } 
+        formattedText: extractAndFormatIdeas(wrappedOutput),
+      }
     });
     console.log("✅ [funnel] Webhook sent");
   }
@@ -208,9 +208,11 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
     },
     output: {
       gptResponse,
-      formattedText: extractAndFormatIdeas(gptResponse),
-    } });
+      formattedText: extractAndFormatIdeas(wrappedOutput),
+    }
+  });
 }
+
 
 async function handleSearchMode({ lowerEmail, membership, trimmedPrompt, webhook, method }) {
   console.log("▶️ [search] Start", { lowerEmail, trimmedPrompt });
@@ -372,3 +374,4 @@ function extractAndFormatIdeas(output) {
     return "";
   }
 }
+
