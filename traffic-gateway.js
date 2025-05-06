@@ -364,7 +364,7 @@ function extractAndFormatIdeas(output) {
       <div style="max-width: 600px; margin: 0 auto; font-family: Arial, sans-serif; text-align: center;">
         <h2 style="font-size: 24px; color: #04075b; margin-bottom: 20px;">📘 Your Personalized Idea List</h2>
         ${ideaLines}
-        <p style="margin-top: 30px; color: #555;">💡 These ideas are tailored to your interest: <strong>${keyword}</strong></p>
+        <p style="margin-top: 30px; color: #555;">💡 These 50+ ideas are tailored to your interest: <strong>${keyword}</strong></p>
       </div>
     `.trim();
   } catch (err) {
@@ -372,4 +372,3 @@ function extractAndFormatIdeas(output) {
     return "";
   }
 }
-
