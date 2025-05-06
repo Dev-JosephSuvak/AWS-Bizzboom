@@ -374,4 +374,3 @@ function extractAndFormatIdeas(output) {
     return "";
   }
 }
-
