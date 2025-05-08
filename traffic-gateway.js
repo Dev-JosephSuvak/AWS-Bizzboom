@@ -13,6 +13,8 @@ import axios from "axios";
 const USER_API = process.env.USER_API;
 const MEMBERSHIP_API = process.env.MEMBERSHIP_API;
 const GPT_API = process.env.GPT_API;
+const POWERPLAYS_API = process.env.POWERPLAYS_API; 
+
 
 export const handler = async (event) => {
   console.log("📥 [handler] Event received:", JSON.stringify(event));
@@ -36,7 +38,15 @@ export const handler = async (event) => {
       destinationWebhook,
       mode = "funnel",
       method = "post",
-      membership = {}
+      membership = {},
+      sessionId,
+      powerplays = {
+        Pinterest: {},
+        Tiktok: {},
+        YouTube: {},
+        Meta: {},
+        X: {}
+      }
     } = body;
 
     const lowerEmail = email?.toLowerCase();
@@ -45,7 +55,7 @@ export const handler = async (event) => {
 
     console.log("🧪 [handler] Inputs: email =", lowerEmail, "prompt =", trimmedPrompt, "mode =", mode, "webhook = ", webhook);
 
-    if (!lowerEmail || !trimmedPrompt || !mode) {
+    if (mode!=="passion-product"&& (!lowerEmail || !trimmedPrompt || !mode)) {
       console.log("❌ [handler] Missing required fields");
       return respond(400, {
         error: "Missing required fields",
@@ -59,6 +69,9 @@ export const handler = async (event) => {
         console.log("🔁 [handler] Destination Webook", webhook);
         return await handleFunnelMode({ lowerEmail, firstName, lastName, business, trimmedPrompt, webhook, method });
 
+      case "passion-product":
+        return await handlePassionProductMode({ trimmedPrompt });
+        
       case "search":
         console.log("🔁 [handler] Routing to handleSearchMode");
         return await handleSearchMode({ lowerEmail, membership, trimmedPrompt, webhook, method });
@@ -71,6 +84,10 @@ export const handler = async (event) => {
         console.log("🔁 [handler] Routing to handleMembershipMode");
         return await handleMembershipMode({ lowerEmail, membership, method });
 
+      case "powerplays":
+        console.log("🔁 [handler] Routing to handlePowerplayMode");
+        return await handlePowerplayMode({ method, email: lowerEmail, ...powerplays });
+
       default:
         console.log("❌ [handler] Invalid mode");
         return respond(400, { error: "Invalid mode" });
@@ -80,10 +97,10 @@ export const handler = async (event) => {
     return respond(500, { error: err.message || "Unhandled error" });
   }
 };
-
 async function handleFunnelMode({ lowerEmail, firstName, lastName, business, trimmedPrompt, webhook, method }) {
   console.log("▶️ [funnel] Start", { lowerEmail, trimmedPrompt });
 
+  // 🔍 Step 1: Ensure User Exists or Create
   try {
     console.log("🔍 [funnel] Checking user existence...");
     await axios.get(`${USER_API}?email=${encodeURIComponent(lowerEmail)}`);
@@ -103,6 +120,7 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
     }
   }
 
+  // 📦 Step 2: Try GPT Cache First
   try {
     console.log("📦 [funnel] Checking GPT cache...");
     const res = await axios.get(`${GPT_API}?keyword=${encodeURIComponent(trimmedPrompt)}&cacheOnly=true`);
@@ -110,16 +128,24 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
 
     let cachedOutput;
     try {
-      cachedOutput = JSON.parse(res.data.response);
-      console.log("✅ [funnel] Parsed cached GPT response");
+      cachedOutput = typeof res.data.response === "string"
+        ? JSON.parse(res.data.response)
+        : res.data.response;
+
+      if (!Array.isArray(cachedOutput)) {
+        cachedOutput = [cachedOutput];
+      }
+
+      console.log("✅ [funnel] Parsed and normalized cached GPT response");
     } catch (parseErr) {
-      console.warn("⚠️ [funnel] Failed to parse cached GPT response. Returning raw string.");
-      cachedOutput = res.data;
+      console.warn("⚠️ [funnel] Failed to parse cached GPT response. Returning as-is:", parseErr.message);
+      cachedOutput = [res.data.response || res.data];
     }
 
     const wrappedCachedOutput = { response: cachedOutput };
+    console.log("🤖 [funnel] Cached GPT Response:", wrappedCachedOutput);
 
-    if (typeof webhook === "string" && webhook.trim() !== "" && webhook !== "null") {
+    if (typeof webhook === "string" && webhook.trim() && webhook !== "null") {
       console.log("📤 [funnel] Sending to webhook...");
       await postToWebhook(webhook, {
         email: lowerEmail,
@@ -153,11 +179,12 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
     console.log("📭 [funnel] Cache miss");
   }
 
+  // 🤖 Step 3: Prompt GPT Directly
   const funnelPrompt = `You are a digital product strategist.
-   Given a hobby, interest, or passion, identify profitable niches or sub-niche angles. For each niche, provide 50 beginner-friendly, high-demand digital product ideas (example (but don't limit responses to): ebooks, templates, courses, planners).
-    Use specific, modern titles that feel fresh and ready to sell. You should have a total of 50 ideas. Avoid duplicates or vague categories.
-    Format your response as raw JSON like this: [{"surfing": ["idea 1", "idea 2", "idea 3", ...]}]. Only return valid JSON. Do not include explanations, markdown, or code fences.
-    Interest: ${trimmedPrompt}`;
+  Given a hobby, interest, or passion, identify profitable niches or sub-niche angles. For each niche, provide 50 beginner-friendly, high-demand digital product ideas (example (but don't limit responses to): ebooks, templates, courses, planners).
+  Use specific, modern titles that feel fresh and ready to sell. You should have a total of 50 ideas. Avoid duplicates or vague categories.
+  Format your response as raw JSON like this: [{"surfing": ["idea 1", "idea 2", "idea 3", ...]}]. Only return valid JSON. Do not include explanations, markdown, or code fences.
+  Interest: ${trimmedPrompt}`;
 
   console.log("🧠 [funnel] Sending to GPT with prompt:", funnelPrompt);
 
@@ -172,12 +199,26 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
     }
   });
 
-  const gptResponse = postRes.data.response;
-  const wrappedOutput = { response: gptResponse }; // ✅ Wrap it
+  let gptResponse = postRes.data.response;
+  try {
+    gptResponse = typeof gptResponse === "string"
+      ? JSON.parse(gptResponse)
+      : gptResponse;
 
-  console.log("🤖 [funnel] GPT Response:", gptResponse);
+    if (!Array.isArray(gptResponse)) {
+      gptResponse = [gptResponse];
+    }
 
-  if (typeof webhook === "string" && webhook.trim() !== "" && webhook !== "null") {
+    console.log("✅ [funnel] GPT response parsed and normalized");
+  } catch (err) {
+    console.warn("⚠️ [funnel] GPT response not JSON parsable, wrapping raw:", err.message);
+    gptResponse = [gptResponse];
+  }
+
+  const wrappedOutput = { response: gptResponse };
+  console.log("🤖 [funnel] GPT Response:", wrappedOutput);
+
+  if (typeof webhook === "string" && webhook.trim() && webhook !== "null") {
     console.log("📤 [funnel] Sending to webhook...");
     await postToWebhook(webhook, {
       email: lowerEmail,
@@ -213,6 +254,99 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
   });
 }
 
+async function handlePowerplayMode({ method, email, ...fields }) {
+  if (!email) {
+    return respond(400, { error: "Missing required field: email" });
+  }
+
+  if (method === "post") {
+    const payload = {
+      email,
+      ...fields
+    };
+
+    const response = await axios.post(POWERPLAYS_API, payload);
+    return respond(201, response.data);
+  }
+
+  if (method === "get") {
+    const response = await axios.get(`${POWERPLAYS_API}?email=${encodeURIComponent(email)}`);
+    return respond(200, response.data);
+  }
+
+  if (method === "patch") {
+    const payload = {
+      email,
+      ...fields
+    };
+
+    const response = await axios.patch(POWERPLAYS_API, payload);
+    return respond(200, response.data);
+  }
+
+  if (method === "delete") {
+    const response = await axios.delete(`${POWERPLAYS_API}?email=${encodeURIComponent(email)}`);
+    return respond(200, response.data);
+  }
+
+  return respond(405, { error: `Unsupported method: ${method}` });
+}
+
+
+async function handlePassionProductMode({ trimmedPrompt }) {
+  console.log("▶️ [passion-product] Start with keyword:", trimmedPrompt);
+
+  const funnelPrompt = `You are a digital product strategist.
+Given a single hobby, interest, or passion, identify 3–5 highly profitable niche or sub-niche categories related to it.
+For each niche or sub-niche, generate approximately 20 unique, beginner-friendly digital product ideas. Examples include: ebooks, templates, printables, mini-courses, planners, or toolkits.
+All ideas should use fresh, modern, and specific titles that feel ready to sell — avoid vague phrasing or duplicates.
+Return your answer as raw JSON, in the following format: [{"<niche name>": ["idea 1", "idea 2", ..., "idea 20"]}, ...].
+Only return valid JSON. Do not include markdown, explanations, or code fences.
+Interest: ${trimmedPrompt}`;
+
+
+  const postRes = await axios({
+    method: "POST",
+    url: GPT_API,
+    data: {
+      prompt: funnelPrompt,
+      keyword: trimmedPrompt,
+      promo: "Passion Product",
+      gptInput: trimmedPrompt
+    }
+  });
+
+  let gptResponse = postRes.data.response;
+
+  try {
+    gptResponse = typeof gptResponse === "string"
+      ? JSON.parse(gptResponse)
+      : gptResponse;
+
+    if (!Array.isArray(gptResponse)) {
+      gptResponse = [gptResponse];
+    }
+
+    console.log("✅ [passion-product] Parsed GPT response");
+  } catch (err) {
+    console.warn("⚠️ [passion-product] GPT response not JSON parsable:", err.message);
+    gptResponse = [gptResponse];
+  }
+
+  const formattedText = extractAndFormatIdeas({ response: gptResponse });
+
+  return respond(200, {
+    input: {
+      prompt: funnelPrompt,
+      keyword: trimmedPrompt,
+      promo: "Passion Product"
+    },
+    output: {
+      gptResponse,
+      formattedText
+    }
+  });
+}
 
 async function handleSearchMode({ lowerEmail, membership, trimmedPrompt, webhook, method }) {
   console.log("▶️ [search] Start", { lowerEmail, trimmedPrompt });
@@ -345,30 +479,30 @@ async function generateViaOpenAI(prompt) {
   console.log("🧠 [generateViaOpenAI] Called with prompt:", prompt);
   return [{ [prompt]: ["Idea 1", "Idea 2", "Idea 3"] }];
 }
-
 function extractAndFormatIdeas(output) {
   try {
     const responseArray = output?.response;
     if (!Array.isArray(responseArray) || responseArray.length === 0) return "";
 
-    const entry = responseArray[0];
-    const keyword = Object.keys(entry)[0];
-    const ideas = entry[keyword];
-
-    if (!Array.isArray(ideas)) return "";
-
-    const ideaLines = ideas.map((idea, i) => {
-      const clean = idea.replace(/^\d+\.\s*/, "").trim();
-      return `<p style="margin: 4px 0;">${i + 1}. ${clean}</p>`;
-    }).join("");
-
-    return `
+    let html = `
       <div style="max-width: 600px; margin: 0 auto; font-family: Arial, sans-serif; text-align: center;">
         <h2 style="font-size: 24px; color: #04075b; margin-bottom: 20px;">📘 Your Personalized Idea List</h2>
-        ${ideaLines}
-        <p style="margin-top: 30px; color: #555;">💡 These 50+ ideas are tailored to your interest: <strong>${keyword}</strong></p>
-      </div>
-    `.trim();
+    `;
+
+    responseArray.forEach(group => {
+      const [niche, ideas] = Object.entries(group)[0];
+
+      html += `<h3 style="margin-top: 20px; color: #333;">${niche}</h3>`;
+
+      ideas.forEach((idea, i) => {
+        const clean = idea.replace(/^\d+\.\s*/, "").trim();
+        html += `<p style="margin: 4px 0;">${i + 1}. ${clean}</p>`;
+      });
+    });
+
+    html += `</div>`;
+    return html.trim();
+
   } catch (err) {
     console.warn("⚠️ Failed to format HTML ideas:", err.message);
     return "";

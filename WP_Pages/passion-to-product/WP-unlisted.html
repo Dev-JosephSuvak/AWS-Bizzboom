@@ -1,0 +1,76 @@
+<div id="idea-app" style="font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; text-align: center;">
+    <h2 style="color: #04075b;">Discover Your First Digital Product Idea</h2>
+
+    <div style="margin: 20px 0;">
+        <input id="interestInput" type="text" placeholder="Ex: cooking, ADHD, budgeting..."
+            style="width: 100%; max-width: 500px; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px;" />
+
+        <div style="margin-top: 12px;">
+            <button onclick="submitInterest()" class="btn-pink"
+                style="padding: 12px 20px; font-size: 16px; border: none; border-radius: 8px; background-color: #ff0386; color: white;">
+                Generate Ideas
+            </button>
+        </div>
+    </div>
+
+
+    <div id="controlPanel" style="display: none; margin-bottom: 20px;">
+        <button onclick="refreshIdeas()" class="btn-pink"
+            style="padding: 10px 16px; border-radius: 6px; font-size: 14px; background-color: #ff0386; color: white; border: none;">🔄
+            Refresh Results</button>
+        <span style="margin-left: 10px; font-size: 14px; color: #666;">Current Interest: <strong
+                id="currentKeyword"></strong></span>
+    </div>
+
+    <div id="resultBox"
+        style="border: 1px solid #ddd; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); min-height: 200px;">
+        <p style="color: #666;">Enter a hobby, interest, or passion to generate your list of digital product ideas.</p>
+    </div>
+</div>
+
+<script>
+    let currentInterest = "";
+
+    async function submitInterest() {
+        const interest = document.getElementById("interestInput").value.trim();
+        if (!interest) {
+            alert("Please enter an interest.");
+            return;
+        }
+
+        currentInterest = interest;
+        document.getElementById("currentKeyword").textContent = interest;
+        document.getElementById("controlPanel").style.display = "block";
+
+        await fetchAndDisplayIdeas(interest);
+    }
+
+    async function refreshIdeas() {
+        if (currentInterest) {
+            await fetchAndDisplayIdeas(currentInterest);
+        }
+    }
+
+    async function fetchAndDisplayIdeas(interest) {
+        const resultBox = document.getElementById("resultBox");
+        resultBox.innerHTML = `<p>⚙️ Generating ideas for <strong>${interest}</strong>...</p>`;
+
+        try {
+            const response = await fetch("https://n1b0wdtd7l.execute-api.us-east-2.amazonaws.com/Stage", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    interest: interest,
+                    mode: "passion-product",
+                    method: "post"
+                })
+            });
+
+            const data = await response.json();
+            resultBox.innerHTML = data.output?.formattedText || "<p>⚠️ No ideas returned. Try again.</p>";
+        } catch (err) {
+            console.error("❌ Error:", err);
+            resultBox.innerHTML = `<p style="color: red;">An error occurred. Please try again later.</p>`;
+        }
+    }
+</script>
