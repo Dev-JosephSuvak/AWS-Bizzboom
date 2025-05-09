@@ -139,7 +139,7 @@ def generate_and_store(event):
         )
 
         message = normalize_gpt_response(gpt_result.choices[0].message.content.strip())
-        logger.info(f"🤖 OpenAI returned response: {message[:200]}...")
+        logger.info(f"🤖 OpenAI returned response: {str(message)[:200]}...")
 
         record = {
             "GPT": keyword,
