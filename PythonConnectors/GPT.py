@@ -28,7 +28,6 @@ def lambda_handler(event, context):
 
     try:
         if method == "GET":
-            # 🧹 Handle purge request
             if query.get("purge") == "true":
                 auth_token = query.get("auth", "")
                 if auth_token == os.environ.get("PURGE_KEY"):
@@ -37,14 +36,15 @@ def lambda_handler(event, context):
                 else:
                     return respond(403, {"error": "Unauthorized purge attempt."})
 
-            # 📋 Handle list mode via query string
             if query.get("mode") == "list":
                 return list_gpt_entries()
 
-            # 🤖 Normal keyword/gptInput request
             return get_or_generate(event)
 
         elif method == "POST":
+            body = json.loads(event.get("body", "{}"))
+            if body.get("mode") == "chat":
+                return chat_direct(body)
             return generate_and_store(event)
 
         else:
@@ -54,7 +54,6 @@ def lambda_handler(event, context):
     except Exception as e:
         logger.exception("🔥 Unhandled exception in lambda_handler")
         return respond(500, {"error": str(e)})
-
 
 
 
@@ -158,6 +157,33 @@ def generate_and_store(event):
     except Exception as e:
         logger.exception("🧠 OpenAI generation failed")
         return respond(502, {"error": f"OpenAI error: {str(e)}", "input": gpt_prompt})
+
+def chat_direct(body):
+    message = body.get("message", "").strip()
+    model = body.get("model", "gpt-3.5-turbo").strip()
+
+    if not message:
+        return respond(400, {"error": "Missing 'message' in request body"})
+
+    try:
+        gpt_result = client.chat.completions.create(
+            model=model,
+            temperature=0.7,
+            messages=[{"role": "user", "content": message}]
+        )
+
+        reply = gpt_result.choices[0].message.content.strip()
+        logger.info(f"💬 Chat reply from {model}: {reply[:200]}...")
+
+        return respond(200, {
+            "model": model,
+            "input": message,
+            "response": reply
+        })
+
+    except Exception as e:
+        logger.exception("🧠 Direct chat failed")
+        return respond(502, {"error": f"Chat error: {str(e)}"})
 
 
 # Custom encoder for Decimal

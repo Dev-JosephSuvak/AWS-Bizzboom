@@ -13,7 +13,7 @@ import axios from "axios";
 const USER_API = process.env.USER_API;
 const MEMBERSHIP_API = process.env.MEMBERSHIP_API;
 const GPT_API = process.env.GPT_API;
-const POWERPLAYS_API = process.env.POWERPLAYS_API; 
+const POWERPLAYS_API = process.env.POWERPLAYS_API;
 
 
 export const handler = async (event) => {
@@ -39,13 +39,8 @@ export const handler = async (event) => {
       mode = "funnel",
       method = "post",
       membership = {},
-      sessionId,
-      powerplays = {
-        Pinterest: {},
-        Tiktok: {},
-        YouTube: {},
-        Meta: {},
-        X: {}
+      step,
+      user = {
       }
     } = body;
 
@@ -53,15 +48,26 @@ export const handler = async (event) => {
     const trimmedPrompt = (interest || gpt || "").trim().toLowerCase();
     const webhook = destinationWebhook?.trim();
 
-    console.log("🧪 [handler] Inputs: email =", lowerEmail, "prompt =", trimmedPrompt, "mode =", mode, "webhook = ", webhook);
+    console.log("🧪 [handler] Inputs: user =", body.user, "; Step =", step);
 
-    if (mode!=="passion-product"&& (!lowerEmail || !trimmedPrompt || !mode)) {
+    const skipValidationModes = [
+      "passion-product",
+      "powerplay",
+      "powerplay-create",
+    ];
+
+    if (!skipValidationModes.includes(mode) && (!lowerEmail || !trimmedPrompt || !mode)) {
       console.log("❌ [handler] Missing required fields");
       return respond(400, {
         error: "Missing required fields",
-        fields: { email: lowerEmail, interest_or_gpt: interest || gpt, mode }
+        fields: {
+          email: lowerEmail,
+          interest_or_gpt: interest || gpt,
+          mode
+        }
       });
     }
+
 
     switch (mode) {
       case "funnel":
@@ -71,7 +77,7 @@ export const handler = async (event) => {
 
       case "passion-product":
         return await handlePassionProductMode({ trimmedPrompt });
-        
+
       case "search":
         console.log("🔁 [handler] Routing to handleSearchMode");
         return await handleSearchMode({ lowerEmail, membership, trimmedPrompt, webhook, method });
@@ -84,9 +90,13 @@ export const handler = async (event) => {
         console.log("🔁 [handler] Routing to handleMembershipMode");
         return await handleMembershipMode({ lowerEmail, membership, method });
 
-      case "powerplays":
+      case "powerplay":
         console.log("🔁 [handler] Routing to handlePowerplayMode");
-        return await handlePowerplayMode({ method, email: lowerEmail, ...powerplays });
+        return await handlePowerplayMode({ step, user });
+
+      case "powerplay-create":
+        console.log("🛠 Routing: step 1 abstract Powerplay creation");
+        return await createInitialPowerplay({ user });
 
       default:
         console.log("❌ [handler] Invalid mode");
@@ -254,42 +264,91 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
   });
 }
 
-async function handlePowerplayMode({ method, email, ...fields }) {
-  if (!email) {
-    return respond(400, { error: "Missing required field: email" });
+async function handlePowerplayMode({ step, user}) {
+
+  console.log("▶️ [powerplay] Start", { step, user });
+
+  if (!user.email) {
+    return respond(400, { error: "Missing required field in obj. user: email" });
   }
 
-  if (method === "post") {
-    const payload = {
-      email,
-      ...fields
-    };
-
-    const response = await axios.post(POWERPLAYS_API, payload);
-    return respond(201, response.data);
+  if (step === 1) {
+    if (!user?.email) {
+      return respond(400, { error: "Missing email in user block" });
+    }
+    try {
+      const res = await axios.post(POWERPLAYS_API, user);
+      return respond(201, {
+        message: "✅ [Powerplay Step 1] Abstract Powerplay created",
+        data: res.data
+      });
+    } catch (err) {
+      console.error("❌ Powerplay step 1 creation failed:", err.message);
+      return respond(500, { error: "❌ Powerplay step 1 creation failed:"+ err.message });
+    }
   }
 
-  if (method === "get") {
-    const response = await axios.get(`${POWERPLAYS_API}?email=${encodeURIComponent(email)}`);
-    return respond(200, response.data);
+  if (step === 2) {
+    try {
+      // Step 1: Retrieve full Powerplay object (not just pinterest)
+      const { data } = await axios.get(`${POWERPLAYS_API}?email=${encodeURIComponent(user.email)}`);
+      const powerplay = data?.powerplays?.[0];
+
+      console.log("📦 [Powerplay] Retrieved Powerplay:", powerplay);
+
+      if (!powerplay?.topic) {
+        return respond(400, { error: "Unable to retrieve powerplay profile or topic missing" });
+      }
+
+      const prompt = buildPinterestNichePrompt(powerplay);
+
+      console.log("🧠 [Powerplay] Sending to GPT with prompt:", prompt);
+      console.log("🧠 [Powerplay] Sending to GPT with keyword:", powerplay.topic.toLowerCase());
+      console.log("🧠 [Powerplay] Sending to GPT with gptInput:", prompt);
+
+      const gptRes = await axios.post(GPT_API, {
+        prompt,
+        keyword: powerplay.topic.toLowerCase(),
+        promo: "Pinterest Powerplay Step 2",
+        gptInput: prompt
+      });
+
+      const niches = gptRes.data?.response || {};
+      const patchBody = { email: user.email, step: 2 };
+
+      Object.entries(niches).forEach(([key, value]) => {
+        patchBody[`pinterest.niche.${key}`] = value;
+      });
+
+      const updateRes = await axios.patch(POWERPLAYS_API, patchBody);
+      return respond(200, {
+        message: "✅ [Powerplay Step 2] Niches generated and saved",
+        data: updateRes.data
+      });
+    } catch (err) {
+      console.error("❌ Powerplay step 2 failed:", err.message);
+      return respond(500, { error: "❌ Powerplay step 2 failed:" + err.message });
+    }
   }
 
-  if (method === "patch") {
-    const payload = {
-      email,
-      ...fields
-    };
+  return respond(400, { error: "❌ Powerplay step failed:n Unsupported or missing step in Powerplay flow" });
+}
 
-    const response = await axios.patch(POWERPLAYS_API, payload);
-    return respond(200, response.data);
+async function createInitialPowerplay({ user }) {
+  if (!user?.email) {
+    return respond(400, { error: "Missing email in user block" });
   }
 
-  if (method === "delete") {
-    const response = await axios.delete(`${POWERPLAYS_API}?email=${encodeURIComponent(email)}`);
-    return respond(200, response.data);
+  try {
+    const res = await axios.post(POWERPLAYS_API, user);
+    return respond(201, {
+      message: "✅ [Powerplay Creation] Abstract Powerplay record created",
+      data: res.data
+    });
+  } catch (err) {
+    console.error("❌ Powerplay creation failed:", err.message);
+    return respond(500, { error: err.message });
   }
-
-  return respond(405, { error: `Unsupported method: ${method}` });
 }
 
 
@@ -393,15 +452,17 @@ async function handleSearchMode({ lowerEmail, membership, trimmedPrompt, webhook
       output: {
         gptResponse,
         formattedText: extractAndFormatIdeas(gptResponse),
-      } 
+      }
     });
   }
 
   console.log("🏁 [search] Done");
-  return respond(200, { output: {
-    gptResponse,
-    formattedText: extractAndFormatIdeas(gptResponse),
-  } });
+  return respond(200, {
+    output: {
+      gptResponse,
+      formattedText: extractAndFormatIdeas(gptResponse),
+    }
+  });
 }
 
 async function handleUserMode({ lowerEmail, firstName, lastName, business, interest, method }) {
@@ -507,4 +568,8 @@ function extractAndFormatIdeas(output) {
     console.warn("⚠️ Failed to format HTML ideas:", err.message);
     return "";
   }
+}
+
+function buildPinterestNichePrompt(user) {
+  return `You are a Pinterest marketing strategist.\n\nUsing the following business info, generate a JSON response with 5 Pinterest-friendly niche options I could explore for content and monetization. Each niche should follow the provided structure exactly.\n\nBusiness Info:\n- Topic: ${user.topic}\n- Business Name: ${user.businessName}\n- Style: ${user.style}\n- Brand Colors: ${user.colors}\n- Fonts: ${user.fonts}\n- Website URL: ${user.websiteUrl}\n- I ${user.hasBrand ? "do" : "don’t"} have a brand established yet.\n\nFor each of the 5 niches, include the following fields:\n- title\n- audience\n- problem\n- contentIdeas (array of 3)\n- commonMistakes (array of 5 with mistake, solution, tip)\n- searchBehaviors\n- keywords (array of 5)\n\nReturn valid JSON in this format:\n{\n  \"niche1\": { ... },\n  \"niche2\": { ... },\n  \"niche3\": { ... },\n  \"niche4\": { ... },\n  \"niche5\": { ... }\n}`;
 }
