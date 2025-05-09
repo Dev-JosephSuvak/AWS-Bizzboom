@@ -264,224 +264,60 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
   });
 }
 
-async function handlePowerplayMode({ step, user }) {
 
-  console.log("▶️ [powerplay] Start", { step, user });
-
-  if (!user.email) {
-    return respond(400, { error: "Missing required field in obj. user: email" });
-  }
+async function handlePowerplayMode({ step, user, platform = "pinterest" }) {
+  if (!user?.email) return respond(400, { error: "Missing user email" });
 
   if (step === 1) {
-    if (!user?.email) {
-      return respond(400, { error: "Missing email in user block" });
-    }
     try {
       const res = await axios.post(POWERPLAYS_API, user);
-      return respond(201, {
-        message: "✅ [Powerplay Step 1] Abstract Powerplay created",
-        data: res.data
-      });
+      return respond(201, { message: "✅ Step 1 Powerplay created", data: res.data });
     } catch (err) {
-      console.error("❌ Powerplay step 1 creation failed:", err.message);
-      return respond(500, { error: "❌ Powerplay step 1 creation failed:" + err.message });
+      return respond(500, { error: "❌ Step 1 creation failed: " + err.message });
     }
   }
 
-  if (step === 2) {
-    try {
-      // Step 1: Retrieve full Powerplay object (not just pinterest)
-      const { data } = await axios.get(`${POWERPLAYS_API}?email=${encodeURIComponent(user.email)}`);
-      const powerplay = data?.powerplays?.[0];
-
-      console.log("📦 [Powerplay] Retrieved Powerplay:", powerplay);
-
-      if (!powerplay?.topic) {
-        return respond(400, { error: "Unable to retrieve powerplay profile or topic missing" });
-      }
-
-      const prompt = buildPinterestNichePrompt(powerplay);
-
-      console.log("🧠 [Powerplay] Sending to GPT with prompt:", prompt);
-      console.log("🧠 [Powerplay] Sending to GPT with keyword:", powerplay.topic.toLowerCase());
-      console.log("🧠 [Powerplay] Sending to GPT with gptInput:", prompt);
-
-      const gptRes = await axios.post(GPT_API, {
-        prompt,
-        keyword: powerplay.topic.toLowerCase(),
-        promo: "Pinterest Powerplay Step 2",
-        gptInput: prompt
-      });
-
-      const niches = gptRes.data?.response || {};
-      const patchBody = { email: user.email, step: 2 };
-
-      Object.entries(niches).forEach(([key, value]) => {
-        patchBody[`pinterest.niche.${key}`] = value;
-      });
-
-      const updateRes = await axios.patch(POWERPLAYS_API, patchBody);
-      return respond(200, {
-        message: "✅ [Powerplay Step 2] Niches generated and saved",
-        data: updateRes.data
-      });
-    } catch (err) {
-      console.error("❌ Powerplay step 2 failed:", err.message);
-      return respond(500, { error: "❌ Powerplay step 2 failed:" + err.message });
-    }
-  }
-
-
-  if (step === 3) {
-    try {
-      const { data } = await axios.get(`${POWERPLAYS_API}?email=${encodeURIComponent(user.email)}`);
-      const powerplay = data?.powerplays?.[0];
-
-      if (!powerplay?.topic || !powerplay?.pinterest?.niche) {
-        return respond(400, { error: "Missing required Pinterest niche data for step 3" });
-      }
-
-      const prompt = buildPinterestStep3Prompt(powerplay);
-
-      const gptRes = await axios.post(GPT_API, {
-        prompt,
-        keyword: powerplay.topic.toLowerCase(),
-        promo: "Pinterest Powerplay Step 3",
-        gptInput: prompt
-      });
-
-      let result = gptRes.data?.response || {};
-      if (typeof result === "string") {
-        try {
-          // Remove line comments (e.g., // ...)
-          const cleaned = result.replace(/\/\/.*$/gm, "").trim();
-          result = JSON.parse(cleaned);
-        } catch (err) {
-          return respond(500, {
-            error: "GPT response was not valid JSON",
-            raw: result
-          });
-        }
-      }
-      
-      const patchBody = {
-        email: user.email,
-        step: 3,
-        "pinterest.affiliate": result.affiliateProducts,
-        "pinterest.boards": result.boards,
-        "pinterest.keywordMap": result.keywordMap
-      };
-
-      const updateRes = await axios.patch(POWERPLAYS_API, patchBody);
-      return respond(200, {
-        message: "✅ [Powerplay Step 3] Boards, affiliates, and keyword map saved",
-        data: updateRes.data
-      });
-    } catch (err) {
-      console.error("❌ Powerplay step 3 failed:", err.message);
-      return respond(500, { error: "❌ Powerplay step 3 failed:" + err.message });
-    }
-  }
-
-  if (step === 4) {
-    try {
-      const { data } = await axios.get(`${POWERPLAYS_API}?email=${encodeURIComponent(user.email)}`);
-      const powerplay = data?.powerplays?.[0];
-
-      if (!powerplay?.pinterest?.boards || !powerplay?.pinterest?.niche) {
-        return respond(400, { error: "Missing required board or niche data for Step 4" });
-      }
-
-      const prompt = buildPinterestStep4Prompt(powerplay);
-
-      const gptRes = await axios.post(GPT_API, {
-        prompt,
-        keyword: powerplay.topic.toLowerCase(),
-        promo: "Pinterest Powerplay Step 4",
-        gptInput: prompt
-      });
-
-      const result = gptRes.data?.response || {};
-      const patchBody = {
-        email: user.email,
-        step: 4,
-        "pinterest.pins": result.pins
-      };
-
-      const updateRes = await axios.patch(POWERPLAYS_API, patchBody);
-      return respond(200, {
-        message: "✅ [Powerplay Step 4] Pins generated and saved",
-        data: updateRes.data
-      });
-    } catch (err) {
-      console.error("❌ Powerplay step 4 failed:", err.message);
-      return respond(500, { error: "❌ Powerplay step 4 failed:" + err.message });
-    }
-  }
-
-  if (step === 5) {
-    try {
-      const { data } = await axios.get(`${POWERPLAYS_API}?email=${encodeURIComponent(user.email)}`);
-      const powerplay = data?.powerplays?.[0];
-  
-      if (!powerplay?.pinterest?.niche) {
-        return respond(400, { error: "Missing required niche data for Step 5" });
-      }
-  
-      const prompt = buildPinterestStep5Prompt(powerplay);
-  
-      const gptRes = await axios.post(GPT_API, {
-        prompt,
-        keyword: powerplay.topic.toLowerCase(),
-        promo: "Pinterest Powerplay Step 5",
-        gptInput: prompt
-      });
-  
-      let result = gptRes.data?.response || {};
-      if (typeof result === "string") {
-        try {
-          result = JSON.parse(result);
-        } catch (err) {
-          return respond(500, { error: "GPT response was not valid JSON", raw: result });
-        }
-      }
-  
-      const patchBody = {
-        email: user.email,
-        step: 5,
-        "pinterest.resources": result
-      };
-  
-      const updateRes = await axios.patch(POWERPLAYS_API, patchBody);
-      return respond(200, {
-        message: "✅ [Powerplay Step 5] Keyword research tools saved",
-        data: updateRes.data
-      });
-    } catch (err) {
-      console.error("❌ Powerplay step 5 failed:", err.message);
-      return respond(500, { error: "❌ Powerplay step 5 failed:" + err.message });
-    }
-  }
-  
-  console.log("❌ Powerplay step failed:", { step, user });
-
-  return respond(400, { error: "❌ Powerplay step failed:n Unsupported or missing step in Powerplay flow" });
-}
-
-async function createInitialPowerplay({ user }) {
-  if (!user?.email) {
-    return respond(400, { error: "Missing email in user block" });
-  }
+  const config = PLATFORM_STEPS[platform]?.[step];
+  if (!config) return respond(400, { error: `❌ Unsupported step ${step} for platform ${platform}` });
 
   try {
-    const res = await axios.post(POWERPLAYS_API, user);
-    return respond(201, {
-      message: "✅ [Powerplay Creation] Abstract Powerplay record created",
-      data: res.data
+    const { data } = await axios.get(`${POWERPLAYS_API}?email=${encodeURIComponent(user.email)}`);
+    const powerplay = data?.powerplays?.[0];
+
+    if (!powerplay || !powerplay.topic) {
+      return respond(400, { error: "Missing topic or invalid powerplay object" });
+    }
+
+    const prompt = config.promptBuilder(powerplay);
+    const gptRes = await axios.post(GPT_API, {
+      prompt,
+      keyword: powerplay.topic.toLowerCase(),
+      promo: config.promo,
+      gptInput: prompt
+    });
+
+    let result = gptRes.data?.response || {};
+    if (typeof result === "string") {
+      try {
+        result = JSON.parse(result.replace(/\/\/.*$/gm, "").trim());
+      } catch (e) {
+        return respond(500, { error: "GPT response was not valid JSON", raw: result });
+      }
+    }
+
+    const patchBody = {
+      email: user.email,
+      step,
+      ...config.patchKeys(result)
+    };
+
+    const updateRes = await axios.patch(POWERPLAYS_API, patchBody);
+    return respond(200, {
+      message: `✅ Step ${step} Powerplay updated`,
+      data: updateRes.data
     });
   } catch (err) {
-    console.error("❌ Powerplay creation failed:", err.message);
-    return respond(500, { error: err.message });
+    return respond(500, { error: `❌ Step ${step} failed: ` + err.message });
   }
 }
 
@@ -837,3 +673,39 @@ Format as raw JSON like this:
 
 Only return valid JSON. Do not include extra formatting, markdown, or comments.`;
 }
+
+const PLATFORM_STEPS = {
+  pinterest: {
+    2: {
+      promptBuilder: buildPinterestNichePrompt,
+      patchKeys: (res) => {
+        const patch = {};
+        Object.entries(res).forEach(([key, val]) => {
+          patch[`pinterest.niche.${key}`] = val;
+        });
+        return patch;
+      },
+      promo: "Pinterest Powerplay Step 2"
+    },
+    3: {
+      promptBuilder: buildPinterestStep3Prompt,
+      patchKeys: (res) => ({
+        "pinterest.affiliate": res.affiliateProducts,
+        "pinterest.boards": res.boards,
+        "pinterest.keywordMap": res.keywordMap
+      }),
+      promo: "Pinterest Powerplay Step 3"
+    },
+    4: {
+      promptBuilder: buildPinterestStep4Prompt,
+      patchKeys: (res) => ({ "pinterest.pins": res.pins }),
+      promo: "Pinterest Powerplay Step 4"
+    },
+    5: {
+      promptBuilder: buildPinterestStep5Prompt,
+      patchKeys: (res) => ({ "pinterest.resources": res }),
+      promo: "Pinterest Powerplay Step 5"
+    }
+  }
+  // Extend for facebook, x, etc. later
+};
