@@ -264,7 +264,7 @@ async function handleFunnelMode({ lowerEmail, firstName, lastName, business, tri
   });
 }
 
-async function handlePowerplayMode({ step, user}) {
+async function handlePowerplayMode({ step, user }) {
 
   console.log("▶️ [powerplay] Start", { step, user });
 
@@ -284,7 +284,7 @@ async function handlePowerplayMode({ step, user}) {
       });
     } catch (err) {
       console.error("❌ Powerplay step 1 creation failed:", err.message);
-      return respond(500, { error: "❌ Powerplay step 1 creation failed:"+ err.message });
+      return respond(500, { error: "❌ Powerplay step 1 creation failed:" + err.message });
     }
   }
 
@@ -330,6 +330,140 @@ async function handlePowerplayMode({ step, user}) {
       return respond(500, { error: "❌ Powerplay step 2 failed:" + err.message });
     }
   }
+
+
+  if (step === 3) {
+    try {
+      const { data } = await axios.get(`${POWERPLAYS_API}?email=${encodeURIComponent(user.email)}`);
+      const powerplay = data?.powerplays?.[0];
+
+      if (!powerplay?.topic || !powerplay?.pinterest?.niche) {
+        return respond(400, { error: "Missing required Pinterest niche data for step 3" });
+      }
+
+      const prompt = buildPinterestStep3Prompt(powerplay);
+
+      const gptRes = await axios.post(GPT_API, {
+        prompt,
+        keyword: powerplay.topic.toLowerCase(),
+        promo: "Pinterest Powerplay Step 3",
+        gptInput: prompt
+      });
+
+      let result = gptRes.data?.response || {};
+      if (typeof result === "string") {
+        try {
+          // Remove line comments (e.g., // ...)
+          const cleaned = result.replace(/\/\/.*$/gm, "").trim();
+          result = JSON.parse(cleaned);
+        } catch (err) {
+          return respond(500, {
+            error: "GPT response was not valid JSON",
+            raw: result
+          });
+        }
+      }
+      
+      const patchBody = {
+        email: user.email,
+        step: 3,
+        "pinterest.affiliate": result.affiliateProducts,
+        "pinterest.boards": result.boards,
+        "pinterest.keywordMap": result.keywordMap
+      };
+
+      const updateRes = await axios.patch(POWERPLAYS_API, patchBody);
+      return respond(200, {
+        message: "✅ [Powerplay Step 3] Boards, affiliates, and keyword map saved",
+        data: updateRes.data
+      });
+    } catch (err) {
+      console.error("❌ Powerplay step 3 failed:", err.message);
+      return respond(500, { error: "❌ Powerplay step 3 failed:" + err.message });
+    }
+  }
+
+  if (step === 4) {
+    try {
+      const { data } = await axios.get(`${POWERPLAYS_API}?email=${encodeURIComponent(user.email)}`);
+      const powerplay = data?.powerplays?.[0];
+
+      if (!powerplay?.pinterest?.boards || !powerplay?.pinterest?.niche) {
+        return respond(400, { error: "Missing required board or niche data for Step 4" });
+      }
+
+      const prompt = buildPinterestStep4Prompt(powerplay);
+
+      const gptRes = await axios.post(GPT_API, {
+        prompt,
+        keyword: powerplay.topic.toLowerCase(),
+        promo: "Pinterest Powerplay Step 4",
+        gptInput: prompt
+      });
+
+      const result = gptRes.data?.response || {};
+      const patchBody = {
+        email: user.email,
+        step: 4,
+        "pinterest.pins": result.pins
+      };
+
+      const updateRes = await axios.patch(POWERPLAYS_API, patchBody);
+      return respond(200, {
+        message: "✅ [Powerplay Step 4] Pins generated and saved",
+        data: updateRes.data
+      });
+    } catch (err) {
+      console.error("❌ Powerplay step 4 failed:", err.message);
+      return respond(500, { error: "❌ Powerplay step 4 failed:" + err.message });
+    }
+  }
+
+  if (step === 5) {
+    try {
+      const { data } = await axios.get(`${POWERPLAYS_API}?email=${encodeURIComponent(user.email)}`);
+      const powerplay = data?.powerplays?.[0];
+  
+      if (!powerplay?.pinterest?.niche) {
+        return respond(400, { error: "Missing required niche data for Step 5" });
+      }
+  
+      const prompt = buildPinterestStep5Prompt(powerplay);
+  
+      const gptRes = await axios.post(GPT_API, {
+        prompt,
+        keyword: powerplay.topic.toLowerCase(),
+        promo: "Pinterest Powerplay Step 5",
+        gptInput: prompt
+      });
+  
+      let result = gptRes.data?.response || {};
+      if (typeof result === "string") {
+        try {
+          result = JSON.parse(result);
+        } catch (err) {
+          return respond(500, { error: "GPT response was not valid JSON", raw: result });
+        }
+      }
+  
+      const patchBody = {
+        email: user.email,
+        step: 5,
+        "pinterest.resources": result
+      };
+  
+      const updateRes = await axios.patch(POWERPLAYS_API, patchBody);
+      return respond(200, {
+        message: "✅ [Powerplay Step 5] Keyword research tools saved",
+        data: updateRes.data
+      });
+    } catch (err) {
+      console.error("❌ Powerplay step 5 failed:", err.message);
+      return respond(500, { error: "❌ Powerplay step 5 failed:" + err.message });
+    }
+  }
+  
+  console.log("❌ Powerplay step failed:", { step, user });
 
   return respond(400, { error: "❌ Powerplay step failed:n Unsupported or missing step in Powerplay flow" });
 }
@@ -540,6 +674,7 @@ async function generateViaOpenAI(prompt) {
   console.log("🧠 [generateViaOpenAI] Called with prompt:", prompt);
   return [{ [prompt]: ["Idea 1", "Idea 2", "Idea 3"] }];
 }
+
 function extractAndFormatIdeas(output) {
   try {
     const responseArray = output?.response;
@@ -572,4 +707,133 @@ function extractAndFormatIdeas(output) {
 
 function buildPinterestNichePrompt(user) {
   return `You are a Pinterest marketing strategist.\n\nUsing the following business info, generate a JSON response with 5 Pinterest-friendly niche options I could explore for content and monetization. Each niche should follow the provided structure exactly.\n\nBusiness Info:\n- Topic: ${user.topic}\n- Business Name: ${user.businessName}\n- Style: ${user.style}\n- Brand Colors: ${user.colors}\n- Fonts: ${user.fonts}\n- Website URL: ${user.websiteUrl}\n- I ${user.hasBrand ? "do" : "don’t"} have a brand established yet.\n\nFor each of the 5 niches, include the following fields:\n- title\n- audience\n- problem\n- contentIdeas (array of 3)\n- commonMistakes (array of 5 with mistake, solution, tip)\n- searchBehaviors\n- keywords (array of 5)\n\nReturn valid JSON in this format:\n{\n  \"niche1\": { ... },\n  \"niche2\": { ... },\n  \"niche3\": { ... },\n  \"niche4\": { ... },\n  \"niche5\": { ... }\n}`;
+}
+
+function buildPinterestStep3Prompt(powerplay) {
+  const niches = powerplay?.pinterest?.niche || {};
+  const nicheLines = Object.values(niches)
+    .filter(n => typeof n === "object")
+    .map(n => `- ${n.title} (Audience: ${n.audience})`)
+    .join("\n");
+
+  return `
+      You are a Pinterest marketing strategist.
+
+      Using the following business info and niche breakdowns, generate a clean, valid JSON object with affiliate products, board structures, and a keyword map.
+
+      Business Info:
+      - Business Name: ${powerplay.businessName}
+      - Topic: ${powerplay.topic}
+      - Style: ${powerplay.style}
+      - Website: ${powerplay.websiteUrl}
+
+      Niches:
+      ${nicheLines}
+
+      PART 1: Affiliate Products
+      Return an array of 5 affiliate product objects (1 per niche) with:
+      - productName
+      - reasonFit (why it's a great fit for that niche's audience)
+      - contentIdea (Pinterest pin idea for that product)
+      - disclosureTip (best practice for affiliate disclosure)
+
+      PART 2: Pinterest Boards
+      Return an array of 10 board objects (2 per niche). Each should have:
+      - title
+      - description
+      - pins: an array of 10 pins, each with:
+        - title (under 100 characters, include a keyword)
+        - description (100–200 characters with long-tail keywords and a call-to-action)
+        - altText
+        - suggestion (format or CTA guidance)
+
+      PART 3: Keyword Map
+      Return an array of 5 content category objects with:
+      - category
+      - keywords (10 keyword strings)
+      - boardSuggestion (recommended board title)
+      - pinIdeas (2 example pin titles or topics)
+
+      Return ONLY a valid JSON object in the format:
+      {
+        "affiliateProducts": [...],
+        "boards": [...],
+        "keywordMap": [...]
+      }
+      Do NOT include markdown, bullet characters, headings, or comments.
+`.trim();
+}
+
+function buildPinterestStep4Prompt(powerplay) {
+  const boards = powerplay?.pinterest?.boards || [];
+  const niches = powerplay?.pinterest?.niche || {};
+
+  return `You are a Pinterest strategist helping a business create SEO-optimized, persuasive Pinterest pins for maximum engagement and discoverability.
+
+  Business Info:
+  - Name: ${powerplay.businessName}
+  - Website: ${powerplay.websiteUrl}
+  - Style: ${powerplay.style}
+  - Topic: ${powerplay.topic}
+
+  Audience Niches:
+  ${Object.values(niches).filter(n => typeof n === 'object').map(n => `• ${n.title}: ${n.audience}`).join("\n")}
+
+  Task:
+  For each board below, generate 10 Pinterest pins. Each pin should be **highly relevant to the board’s niche and audience**.
+
+  For **each pin**, provide:
+  - **title**: Under 100 characters, use bolded keywords, power words, and formats like “How to”, “Top 5”, “Quick Tips” (from Prompt 2)
+  - **description**: 100–200 characters, include natural long-tail keywords, appeal to audience goals or struggles, and end with a CTA like “Click to learn more” or "Save for Later" (from Prompt 1)
+  - **altText**: Accessibility-friendly description of the visual and topic
+  - **suggestion**: Brief style or CTA tip (e.g., “Use bold typography and a red callout banner”)
+
+  Boards:
+  ${boards.map((b, i) => `• board${i + 1}: ${b.title} — ${b.description}`).join("\n")}
+
+  Output JSON format:
+  {
+    "pins": {
+      "board1": [ { "title": "...", "description": "...", "altText": "...", "suggestion": "..." }, ... ],
+      "board2": [...],
+      ...
+    }
+  }
+  Return only valid JSON. No commentary, no markdown.`;
+}
+
+function buildPinterestStep5Prompt(powerplay) {
+  const niches = powerplay?.pinterest?.niche || {};
+  const nicheTitles = Object.values(niches)
+    .filter(n => typeof n === "object" && n.title)
+    .map(n => n.title)
+    .join(", ") || "multiple Pinterest niches I'm exploring";
+
+  return `You are a Pinterest SEO expert.
+
+My niche areas include: ${nicheTitles}
+
+I want to find high-performing Pinterest keywords tailored to these topics.
+
+Suggest 5 keyword research tools I can use. Return:
+- 2 free tools
+- 3 paid tools
+
+For each tool, include:
+- name
+- url
+- features (e.g., keyword suggestions, search volume, Pinterest trend data)
+- bestFor (beginner or advanced users)
+
+Format as raw JSON like this:
+[
+  {
+    "name": "Tool Name",
+    "url": "https://example.com",
+    "features": "Keyword suggestions, Pinterest trends, SEO insights",
+    "bestFor": "Beginner"
+  }
+]
+
+Only return valid JSON. Do not include extra formatting, markdown, or comments.`;
 }

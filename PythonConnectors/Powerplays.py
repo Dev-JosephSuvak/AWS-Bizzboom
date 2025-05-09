@@ -45,10 +45,6 @@ def create_powerplay(event):
             return respond(400, {"error": f"Missing required field: {key}"})
 
     pinterest = {
-        "niche": {f"niche{i}": "" for i in range(1, 6)},
-        "affiliate": {f"product{i}": "" for i in range(1, 6)},
-        "board": {f"board{i}": "" for i in range(1, 11)},
-        "pins": {f"day{i}": [] for i in range(1, 32)}
     }
 
     item = {
